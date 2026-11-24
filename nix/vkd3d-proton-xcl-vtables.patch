@@ -1,0 +1,195 @@
+diff --git a/libs/vkd3d/bundle.c b/libs/vkd3d/bundle.c
+index b667148..5cd45d7 100644
+--- a/libs/vkd3d/bundle.c
++++ b/libs/vkd3d/bundle.c
+@@ -238,7 +238,7 @@ HRESULT d3d12_bundle_allocator_create(struct d3d12_device *device,
+ 
+ static struct d3d12_bundle_allocator *d3d12_bundle_allocator_from_iface(ID3D12CommandAllocator *iface)
+ {
+-    if (!iface || iface->lpVtbl != &d3d12_bundle_allocator_vtbl)
++    if (!iface || !VKD3D_VTBL_IS(iface, &d3d12_bundle_allocator_vtbl))
+         return NULL;
+ 
+     return impl_from_ID3D12CommandAllocator(iface);
+@@ -1922,7 +1922,7 @@ void d3d12_bundle_execute(struct d3d12_bundle *bundle, d3d12_command_list_iface
+ 
+ struct d3d12_bundle *d3d12_bundle_from_iface(ID3D12GraphicsCommandList *iface)
+ {
+-    if (!iface || iface->lpVtbl != (struct ID3D12GraphicsCommandListVtbl *)&d3d12_bundle_vtbl)
++    if (!iface || !VKD3D_VTBL_IS(iface, &d3d12_bundle_vtbl))
+         return NULL;
+ 
+     return impl_from_ID3D12GraphicsCommandList((d3d12_command_list_iface *)iface);
+diff --git a/libs/vkd3d/command.c b/libs/vkd3d/command.c
+index c6f6ee8..61c9afe 100644
+--- a/libs/vkd3d/command.c
++++ b/libs/vkd3d/command.c
+@@ -3352,7 +3352,7 @@ static bool d3d12_command_allocator_allocate_query_from_heap_type(struct d3d12_c
+ 
+ static struct d3d12_command_allocator *d3d12_command_allocator_from_iface(ID3D12CommandAllocator *iface)
+ {
+-    if (!iface || iface->lpVtbl != &d3d12_command_allocator_vtbl)
++    if (!iface || !VKD3D_VTBL_IS(iface, &d3d12_command_allocator_vtbl))
+         return NULL;
+ 
+     return impl_from_ID3D12CommandAllocator(iface);
+@@ -23187,19 +23187,19 @@ struct d3d12_command_list *d3d12_command_list_from_iface(ID3D12CommandList *ifac
+         return NULL;
+ 
+ #ifdef VKD3D_ENABLE_PROFILING
+-    is_valid |= iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_profiled;
++    is_valid |= VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_profiled);
+ #endif
+ 
+     /* A little annoying, but we only have to validate this on submission,
+      * so the overhead is irrelevant. */
+     is_valid |=
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_default ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_64_16 ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_32_32 ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_32_16 ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_128_32 ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_128_16 ||
+-            iface->lpVtbl == (struct ID3D12CommandListVtbl *)&d3d12_command_list_vtbl_embedded_default;
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_default) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_64_16) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_32_32) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_32_16) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_128_32) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_128_16) ||
++            VKD3D_VTBL_IS(iface, &d3d12_command_list_vtbl_embedded_default);
+ 
+     if (!is_valid)
+         return NULL;
+diff --git a/libs/vkd3d/vkd3d_private.h b/libs/vkd3d/vkd3d_private.h
+index 8024485..49205c7 100644
+--- a/libs/vkd3d/vkd3d_private.h
++++ b/libs/vkd3d/vkd3d_private.h
+@@ -51,6 +51,34 @@
+ 
+ #define VK_CALL(f) (vk_procs->f)
+ 
++/* XCL (https://github.com/ivall/xcl) replaces the vtable pointer of the D3D12 objects it hands to
++ * Xbox titles with its own vtable: a copy outside this module whose word before slot 0 is the
++ * original vtable. Such an object is still ours, with the type of that original vtable. Vtables
++ * inside this module are compared as they are, so our own objects are classified as before. */
++static inline bool vkd3d_vtbl_is(const void *vtbl, const void *expected)
++{
++#ifdef _WIN32
++    extern IMAGE_DOS_HEADER __ImageBase;
++    const IMAGE_NT_HEADERS *nt;
++    uintptr_t base, v;
++#endif
++
++    if (vtbl == expected)
++        return true;
++#ifdef _WIN32
++    base = (uintptr_t)&__ImageBase;
++    nt = (const IMAGE_NT_HEADERS *)(base + __ImageBase.e_lfanew);
++    v = (uintptr_t)vtbl;
++    if (!vtbl || (v >= base && v - base < nt->OptionalHeader.SizeOfImage))
++        return false;
++    return ((const void * const *)vtbl)[-1] == expected;
++#else
++    return false;
++#endif
++}
++
++#define VKD3D_VTBL_IS(iface, vtbl) vkd3d_vtbl_is((const void *)(iface)->lpVtbl, (const void *)(vtbl))
++
+ #define MAKE_MAGIC(a,b,c,d) (((uint32_t)a) | (((uint32_t)b) << 8) | (((uint32_t)c) << 16) | (((uint32_t)d) << 24))
+ 
+ #define VKD3D_MAX_COMPATIBLE_FORMAT_COUNT 10u
+@@ -702,7 +730,7 @@ static inline struct d3d12_fence *impl_from_ID3D12Fence1(ID3D12Fence1 *iface)
+     extern CONST_VTBL struct ID3D12Fence1Vtbl d3d12_fence_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_fence_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_fence_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_fence, ID3D12Fence_iface);
+ }
+ 
+@@ -753,7 +781,7 @@ static inline struct d3d12_shared_fence *shared_impl_from_ID3D12Fence1(ID3D12Fen
+     extern CONST_VTBL struct ID3D12Fence1Vtbl d3d12_shared_fence_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_shared_fence_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_shared_fence_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_shared_fence, ID3D12Fence_iface);
+ }
+ 
+@@ -769,9 +797,9 @@ static inline bool is_shared_ID3D12Fence1(ID3D12Fence1 *iface)
+ {
+     extern CONST_VTBL struct ID3D12Fence1Vtbl d3d12_shared_fence_vtbl;
+     extern CONST_VTBL struct ID3D12Fence1Vtbl d3d12_fence_vtbl;
+-    assert(iface->lpVtbl ==  &d3d12_shared_fence_vtbl || iface->lpVtbl == &d3d12_fence_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_shared_fence_vtbl) || VKD3D_VTBL_IS(iface, &d3d12_fence_vtbl));
+ 
+-    return iface->lpVtbl ==  &d3d12_shared_fence_vtbl;
++    return VKD3D_VTBL_IS(iface, &d3d12_shared_fence_vtbl);
+ }
+ 
+ static inline bool is_shared_ID3D12Fence(ID3D12Fence *iface)
+@@ -1074,7 +1102,7 @@ static inline struct d3d12_heap *impl_from_ID3D12Heap1(ID3D12Heap1 *iface)
+     extern CONST_VTBL struct ID3D12Heap1Vtbl d3d12_heap_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_heap_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_heap_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_heap, ID3D12Heap_iface);
+ }
+ 
+@@ -1299,7 +1327,7 @@ static inline struct d3d12_resource *impl_from_ID3D12Resource2(ID3D12Resource2 *
+     extern CONST_VTBL struct ID3D12Resource2Vtbl d3d12_resource_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_resource_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_resource_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_resource, ID3D12Resource_iface);
+ }
+ 
+@@ -1721,7 +1749,7 @@ static inline struct d3d12_descriptor_heap *impl_from_ID3D12DescriptorHeap(ID3D1
+     extern CONST_VTBL struct ID3D12DescriptorHeapVtbl d3d12_descriptor_heap_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_descriptor_heap_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_descriptor_heap_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_descriptor_heap, ID3D12DescriptorHeap_iface);
+ }
+ 
+@@ -1914,7 +1942,7 @@ static inline struct d3d12_query_heap *impl_from_ID3D12QueryHeap(ID3D12QueryHeap
+     extern CONST_VTBL struct ID3D12QueryHeapVtbl d3d12_query_heap_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_query_heap_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_query_heap_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_query_heap, ID3D12QueryHeap_iface);
+ }
+ 
+@@ -2108,7 +2136,7 @@ static inline struct d3d12_root_signature *impl_from_ID3D12RootSignature(ID3D12R
+     extern CONST_VTBL struct ID3D12RootSignatureVtbl d3d12_root_signature_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_root_signature_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_root_signature_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_root_signature, ID3D12RootSignature_iface);
+ }
+ 
+@@ -2553,7 +2581,7 @@ static inline struct d3d12_pipeline_state *impl_from_ID3D12PipelineState(ID3D12P
+     extern CONST_VTBL struct ID3D12PipelineStateVtbl d3d12_pipeline_state_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_pipeline_state_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_pipeline_state_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_pipeline_state, ID3D12PipelineState_iface);
+ }
+ 
+@@ -4018,7 +4046,7 @@ static inline struct d3d12_command_signature *impl_from_ID3D12CommandSignature(I
+     extern CONST_VTBL struct ID3D12CommandSignatureVtbl d3d12_command_signature_vtbl;
+     if (!iface)
+         return NULL;
+-    assert(iface->lpVtbl == &d3d12_command_signature_vtbl);
++    assert(VKD3D_VTBL_IS(iface, &d3d12_command_signature_vtbl));
+     return CONTAINING_RECORD(iface, struct d3d12_command_signature, ID3D12CommandSignature_iface);
+ }
+ 
