@@ -28,11 +28,11 @@
       # (hle/d3d12x/real.rs, `adopt`), and vkd3d-proton's checks of an object's vtable (asserts,
       # and the fence / allocator / command list lookups) refused those objects.
       vkd3d-proton = mingw.vkd3d-proton.overrideAttrs (old: {
-        version = "3.1";
+        version = "3.1-unstable-2026-11-23"; # master: v3.1 hung NVIDIA GPUs on a plain load + 64-bit atomic of one buffer
         src = pkgs.fetchFromGitHub {
           owner = "HansKristian-Work";
           repo = "vkd3d-proton";
-          tag = "v3.1";
+          rev = "30b0eb9bc12dc9f40e1a33a2be8c87cf0846447b";
           fetchSubmodules = true;
           # meson's vcs_tag needs git; record what it would read, then drop .git (as nixpkgs does)
           deepClone = true;
@@ -43,7 +43,7 @@
             git describe --always --tags --dirty=+ > .nixpkgs-auxfiles/vkd3d_version
             find $out -name .git -print0 | xargs -0 rm -fr
           '';
-          hash = "sha256-OfojrwbORfWfOusec9/RgxFurqeXTC43xGiEJ9SQXFE=";
+          hash = "sha256-oKpM9fm0V6Ukb3PSwu08ZzJEJcGMNQdU/KXyh9RvHIE=";
         };
         patches = (old.patches or [ ]) ++ [ ./nix/vkd3d-proton-xcl-vtables.patch ];
         # build tools for Linux (widl comes from Wine); the cross package's own `wine` input
@@ -82,7 +82,7 @@
         for f in d3d12.dll d3d12core.dll; do
           install -m 644 "${vkd3d-proton}/bin/$f" "$sys32/$f"
         done
-        echo "vkd3d-proton 3.1 (XCL vtable patch) installed in $sys32"
+        echo "vkd3d-proton ${vkd3d-proton.version} (XCL vtable patch) installed in $sys32"
       '';
     in
     {
